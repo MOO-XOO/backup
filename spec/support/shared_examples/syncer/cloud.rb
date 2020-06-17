@@ -230,11 +230,23 @@ shared_examples "a subclass of Syncer::Cloud::Base" do
       before do
         allow(syncer).to receive(:get_remote_files)
           .with("my_backups/sync_dir").and_return(remote_files_data)
+
         expect(Backup::Syncer::Cloud::LocalFile).to receive(:find_md5)
           .with("/local/path/sync_dir", []).and_return(find_md5_data)
 
         syncer.thread_count = 20
         allow(syncer).to receive(:sleep) # quicker tests
+
+        # Don't print $stderr message for this spec
+        if Thread.respond_to?(:report_on_exception) && Thread.report_on_exception
+          Thread.report_on_exception = false
+        end
+      end
+
+      after do
+        unless Thread.respond_to?(:report_on_exception) && Thread.report_on_exception
+          Thread.report_on_exception = true
+        end
       end
 
       context "without mirror" do
@@ -352,28 +364,13 @@ shared_examples "a subclass of Syncer::Cloud::Base" do
       end
 
       it "logs and raises error on upload failure" do
-        orig_report_on_exception = nil
-        if Thread.respond_to?(:report_on_exception)
-          orig_report_on_exception = Thread.report_on_exception
-          # Don't print $stderr message for this spec
-          Thread.report_on_exception = false
+        allow(cloud_io).to receive(:upload).and_raise("upload failure")
+        expect(Backup::Logger).to receive(:error).at_least(1).times do |err|
+          expect(err.message).to eq "upload failure"
         end
-
-        begin
-          allow(cloud_io).to receive(:upload).and_raise("upload failure")
-          expect(Backup::Logger).to receive(:error).at_least(1).times do |err|
-            expect(err.message).to eq "upload failure"
-          end
-
-          expect do
-            syncer.perform!
-          end.to raise_error(Backup::Syncer::Cloud::Error)
-        ensure
-          # Restore original `report_on_exception` settings
-          if Thread.respond_to?(:report_on_exception)
-             Thread.report_on_exception = orig_report_on_exception
-          end
-        end
+        expect do
+          syncer.perform!
+        end.to raise_error(Backup::Syncer::Cloud::Error)
       end
     end # context 'with threads'
   end # describe '#perform'
